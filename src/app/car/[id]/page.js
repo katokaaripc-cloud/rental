@@ -25,7 +25,7 @@ export default function CarDetailPage({ params }) {
     const res = await fetch('/api/bookings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fullName, phoneNumber, carName: car.name })
+      body: JSON.stringify({ fullName, phoneNumber, carName: car.name, carId: car.id })
     });
 
     if (res.ok) {
@@ -99,7 +99,7 @@ export default function CarDetailPage({ params }) {
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full border border-slate-100 shadow-2xl relative">
             <h2 className="text-2xl font-extrabold text-slate-900 mb-2">Secure Booking</h2>
-            <p className="text-sm text-slate-400 mb-6">Your details will be streamed to our spreadsheet records instantly.</p>
+            <p className="text-sm text-slate-400 mb-6">Your booking request will be sent to our team.</p>
             
             <form onSubmit={handleOrderSubmit} className="space-y-5">
               <div>
@@ -114,11 +114,11 @@ export default function CarDetailPage({ params }) {
 
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Contact Phone Number</label>
-                <input type="tel" required value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)} placeholder="e.g., +212 661-XXXXXX" className="w-full bg-white border border-slate-200 focus:border-slate-900 p-3 rounded-xl outline-none text-slate-900 transition" />
+                <input type="tel" inputMode="numeric" pattern="[0-9+\s\-]*" required value={phoneNumber} onChange={e => setPhoneNumber(e.target.value.replace(/[^0-9+\s\-]/g, ''))} placeholder="e.g., +212 661-XXXXXX" className="w-full bg-white border border-slate-200 focus:border-slate-900 p-3 rounded-xl outline-none text-slate-900 transition" />
               </div>
 
-              {bookingStatus === 'success' && <p className="text-sm font-semibold text-emerald-600 bg-emerald-50 border border-emerald-100 p-3 rounded-xl text-center">🎉 Order logged! Check your connected spreadsheet.</p>}
-              {bookingStatus === 'error' && <p className="text-sm font-semibold text-rose-600 bg-rose-50 border border-rose-100 p-3 rounded-xl text-center">Submission error. Check backend Google API credentials configuration parameters.</p>}
+              {bookingStatus === 'success' && <p className="text-sm font-semibold text-emerald-600 bg-emerald-50 border border-emerald-100 p-3 rounded-xl text-center">Booking request submitted! We will contact you shortly.</p>}
+              {bookingStatus === 'error' && <p className="text-sm font-semibold text-rose-600 bg-rose-50 border border-rose-100 p-3 rounded-xl text-center">Submission error. Please try again.</p>}
 
               <div className="flex gap-4 pt-2">
                 <button type="button" onClick={() => { setModalOpen(false); setBookingStatus(''); }} className="w-1/3 border border-slate-200 text-slate-500 font-medium py-3 rounded-xl hover:bg-slate-50 transition text-sm">Cancel</button>
