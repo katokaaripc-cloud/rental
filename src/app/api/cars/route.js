@@ -24,16 +24,20 @@ export async function POST(request) {
     cars.push(newCar);
     await setCars(cars);
     return NextResponse.json({ success: true, car: newCar });
-  } catch {
-    return NextResponse.json({ error: "Failed to parse car data" }, { status: 400 });
+  } catch (e) {
+    return NextResponse.json({ error: e.message || "Failed to save car" }, { status: 500 });
   }
 }
 
 export async function DELETE(request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
-  let cars = await getCars();
-  cars = cars.filter(car => car.id !== id);
-  await setCars(cars);
-  return NextResponse.json({ success: true });
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    let cars = await getCars();
+    cars = cars.filter(car => car.id !== id);
+    await setCars(cars);
+    return NextResponse.json({ success: true });
+  } catch (e) {
+    return NextResponse.json({ error: e.message || "Failed to delete car" }, { status: 500 });
+  }
 }

@@ -10,12 +10,16 @@ export async function GET(_, { params }) {
 }
 
 export async function PATCH(request, { params }) {
-  const { id } = await params;
-  const body = await request.json();
-  const cars = await getCars();
-  const idx = cars.findIndex(c => c.id === id);
-  if (idx === -1) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  cars[idx] = { ...cars[idx], ...body };
-  await setCars(cars);
-  return NextResponse.json({ success: true, car: cars[idx] });
+  try {
+    const { id } = await params;
+    const body = await request.json();
+    const cars = await getCars();
+    const idx = cars.findIndex(c => c.id === id);
+    if (idx === -1) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    cars[idx] = { ...cars[idx], ...body };
+    await setCars(cars);
+    return NextResponse.json({ success: true, car: cars[idx] });
+  } catch (e) {
+    return NextResponse.json({ error: e.message || "Failed to update car" }, { status: 500 });
+  }
 }

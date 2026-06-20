@@ -5,6 +5,7 @@ import { Trash2, PlusCircle, X, Eye, EyeOff } from 'lucide-react';
 export default function FleetPage() {
   const fileInputRef = useRef(null);
   const [cars, setCars] = useState([]);
+  const [error, setError] = useState('');
   const [newCar, setNewCar] = useState({
     name: '', pricePerDay: '', type: 'Premium SUV', fuel: 'Diesel', description: '',
     gearbox: 'Automatic', engine: '2.0 l', year: '2024 — 2026', ac: 'Dual-zone automatic',
@@ -14,11 +15,12 @@ export default function FleetPage() {
   useEffect(() => { fetchCars(); }, []);
 
   const fetchCars = () => {
-    fetch('/api/cars?all=true').then(res => res.json()).then(data => setCars(data));
+    fetch('/api/cars?all=true').then(res => res.json()).then(data => setCars(data)).catch(() => setError('Failed to load cars'));
   };
 
   const handleAddCar = async (e) => {
     e.preventDefault();
+    setError('');
     const res = await fetch('/api/cars', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -32,21 +34,35 @@ export default function FleetPage() {
         gearbox: 'Automatic', engine: '2.0 l', year: '2024 — 2026', ac: 'Dual-zone automatic',
         seats: '5', minExperience: '2 years', mileageLimit: 'No', images: []
       });
+    } else {
+      const err = await res.json();
+      setError(err.error || 'Failed to add car');
     }
   };
 
   const toggleHidden = async (car) => {
-    await fetch(`/api/cars/${car.id}`, {
+    setError('');
+    const res = await fetch(`/api/cars/${car.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hidden: !car.hidden })
     });
+    if (!res.ok) {
+      const err = await res.json();
+      setError(err.error || 'Failed to update car');
+    }
     fetchCars();
   };
 
   const handleDeleteCar = async (id) => {
+    setError('');
     const res = await fetch(`/api/cars?id=${id}`, { method: 'DELETE' });
-    if (res.ok) fetchCars();
+    if (res.ok) {
+      fetchCars();
+    } else {
+      const err = await res.json();
+      setError(err.error || 'Failed to delete car');
+    }
   };
 
   const visibleCount = cars.filter(c => !c.hidden).length;
@@ -55,6 +71,7 @@ export default function FleetPage() {
     <>
       <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 mb-8">Fleet Registry Management</h1>
 
+      {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
         <form onSubmit={handleAddCar} className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-4 lg:col-span-1 text-sm">
           <h2 className="font-bold text-slate-900 flex items-center gap-2 text-base mb-2"><PlusCircle size={18} className="text-emerald-600"/> Append New Vehicle Asset</h2>

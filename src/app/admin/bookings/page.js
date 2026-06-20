@@ -4,31 +4,43 @@ import { Trash2, Check, User, Phone, Calendar, Car } from 'lucide-react';
 
 export default function BookingsPage() {
   const [bookings, setBookings] = useState([]);
+  const [error, setError] = useState('');
 
   useEffect(() => { fetchBookings(); }, []);
 
   const fetchBookings = () => {
-    fetch('/api/bookings').then(res => res.json()).then(data => setBookings(data));
+    fetch('/api/bookings').then(res => res.json()).then(data => setBookings(data)).catch(() => setError('Failed to load bookings'));
   };
 
   const handleConfirmBooking = async (booking) => {
-    await fetch(`/api/cars/${booking.carId}`, {
+    setError('');
+    const r1 = await fetch(`/api/cars/${booking.carId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hidden: true })
     });
-    await fetch(`/api/bookings?id=${booking.id}`, { method: 'DELETE' });
+    const r2 = await fetch(`/api/bookings?id=${booking.id}`, { method: 'DELETE' });
+    if (!r1.ok || !r2.ok) {
+      const e = await (r1.ok ? r2 : r1).json().catch(() => ({}));
+      setError(e.error || 'Failed to confirm booking');
+    }
     fetchBookings();
   };
 
   const handleDeleteBooking = async (id) => {
-    await fetch(`/api/bookings?id=${id}`, { method: 'DELETE' });
+    setError('');
+    const res = await fetch(`/api/bookings?id=${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      setError(e.error || 'Failed to delete booking');
+    }
     fetchBookings();
   };
 
   return (
     <>
       <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 mb-8">Booking Requests</h1>
+      {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-4 bg-slate-50 border-b border-slate-200">

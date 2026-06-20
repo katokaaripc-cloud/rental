@@ -26,16 +26,20 @@ export async function POST(request) {
     bookings.push(newBooking);
     await setBookings(bookings);
     return NextResponse.json({ success: true, booking: newBooking });
-  } catch {
-    return NextResponse.json({ error: "Failed to create booking" }, { status: 400 });
+  } catch (e) {
+    return NextResponse.json({ error: e.message || "Failed to create booking" }, { status: 500 });
   }
 }
 
 export async function DELETE(request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
-  const bookings = await getBookings();
-  const filtered = bookings.filter(b => b.id !== id);
-  await setBookings(filtered);
-  return NextResponse.json({ success: true });
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    const bookings = await getBookings();
+    const filtered = bookings.filter(b => b.id !== id);
+    await setBookings(filtered);
+    return NextResponse.json({ success: true });
+  } catch (e) {
+    return NextResponse.json({ error: e.message || "Failed to delete booking" }, { status: 500 });
+  }
 }
