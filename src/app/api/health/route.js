@@ -1,41 +1,64 @@
 import { NextResponse } from 'next/server';
-import { Redis } from '@upstash/redis';
 
 export async function GET() {
-  const checks = {
-    vercel: !!process.env.VERCEL,
-    admin_username_set: !!process.env.ADMIN_USERNAME,
-    admin_password_set: !!process.env.ADMIN_PASSWORD,
-    kv_rest_url_set: !!process.env.KV_REST_API_URL,
-    kv_rest_token_set: !!process.env.KV_REST_API_TOKEN,
-    upstash_url_set: !!process.env.UPSTASH_REDIS_REST_URL,
-    upstash_token_set: !!process.env.UPSTASH_REDIS_REST_TOKEN,
-    kv_url_set: !!process.env.KV_URL,
-  };
+  const kvUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
+  const kvToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
 
-  // Try KV connection
+  // Test KV connection
   let kvStatus = 'not_configured';
-  if (checks.kv_rest_url_set || checks.upstash_url_set) {
+  let kvTest = null;
+  if (kvUrl && kvToken) {
     try {
-      const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-      const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-      if (url && token) {
-        const redis = new Redis({ url, token });
-        await redis.set('_healthcheck', 'ok');
-        const val = await redis.get('_healthcheck');
-        kvStatus = val === 'ok' ? 'connected' : 'unexpected_response';
+      const res = await fetch(`${kvUrl}/get/_health`, {
+        headers: { Authorization: `Bearer ${kvToken}` },
+      });
+      if (res.ok) {
+        const body = await res.json();
+        kvTest = body.result;
+        kvStatus = 'connected';
       } else {
-        kvStatus = 'missing_token_or_url';
+        kvStatus = `http_${res.status}`;
       }
     } catch (e) {
       kvStatus = `error: ${e.message}`;
     }
   }
 
+  // Attempt a write + read
+  let rwTest = 'not_tested';
+  if (kvStatus === 'connected') {
+    try {
+      await fetch(`${kvUrl}/set/_rwtest`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${kvToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: '"ok"',
+      });
+      const res = await fetch(`${kvUrl}/get/_rwtest`, {
+        headers: { Authorization: `Bearer ${kvToken}` },
+      });
+      const body = await res.json();
+      rwTest = body.result === 'ok' ? 'read_write_ok' : 'unexpected';
+    } catch (e) {
+      rwTest = `error: ${e.message}`;
+    }
+  }
+
   return NextResponse.json({
-    status: 'ok',
-    environment: checks.vercel ? 'vercel' : 'local',
+    status: kvStatus === 'connected' && rwTest === 'read_write_ok' ? 'all_good' : 'needs_fix',
+    environment: process.env.VERCEL ? 'vercel' : 'local',
     kv: kvStatus,
-    env_vars: checks,
+    kv_read_write: rwTest,
+    kv_url_set: !!kvUrl,
+    kv_token_set: !!kvToken,
+    admin_username_set: !!process.env.ADMIN_USERNAME,
+    admin_password_set: !!process.env.ADMIN_PASSWORD,
+    message: kvStatus !== 'connected'
+      ? 'KV/REDIS database not detected. Go to Vercel Dashboard → Storage → Create Database → Redis → Create, then redeploy.'
+      : rwTest !== 'read_write_ok'
+        ? 'KV connected but read/write failed. Try recreating the KV store.'
+        : 'Everything works. If data still disappears, try a fresh redeploy.',
   });
 }
