@@ -1,47 +1,28 @@
+import { createClient } from 'redis';
 import { promises as fs } from 'fs';
 import path from 'path';
-import os from 'os';
 
 const isVercel = process.env.VERCEL === '1';
 
-// On Vercel only /tmp is writable (ephemeral).
-// KV (Redis) via REST API is the proper persistence layer.
-const TMP_DIR = path.join(os.tmpdir(), 'rentalkech-data');
-const CARS_FILE = path.join(TMP_DIR, 'cars.json');
-const BOOKINGS_FILE = path.join(TMP_DIR, 'bookings.json');
+// ── Redis client (singleton) ──
+let client;
+let clientErr;
 
-// ── Direct Upstash / Vercel KV REST client (no npm dependency issues) ──
-function kvUrl() {
-  return process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
-}
-function kvToken() {
-  return process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
-}
-function kvReady() {
-  return !!(kvUrl() && kvToken());
-}
-
-async function kvGet(key) {
+async function getClient() {
+  if (clientErr) return null;
+  if (client?.isOpen) return client;
   try {
-    const res = await fetch(`${kvUrl()}/get/${key}`, {
-      headers: { Authorization: `Bearer ${kvToken()}` },
-    });
-    if (!res.ok) return null;
-    const body = await res.json();
-    return body.result;
-  } catch { return null; }
-}
-
-async function kvSet(key, value) {
-  const res = await fetch(`${kvUrl()}/set/${key}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${kvToken()}`,
-      'Content-Type': 'application/json',
-    },
-    body: typeof value === 'string' ? value : JSON.stringify(value),
-  });
-  if (!res.ok) throw new Error(`KV set failed: ${res.status}`);
+    const url = process.env.KV_URL || process.env.REDIS_URL;
+    if (!url) {
+      clientErr = new Error('KV_URL or REDIS_URL not set');
+      return null;
+    }
+    client = await createClient({ url }).connect();
+    return client;
+  } catch (e) {
+    clientErr = e;
+    return null;
+  }
 }
 
 // ── Seed data ──
@@ -88,7 +69,6 @@ async function writeJSONFile(filePath, data) {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
-// Try reading from project data/ dir (available in source, may exist in some Vercel deployments)
 async function readProjectDataFile(name) {
   try {
     const p = path.join(process.cwd(), 'data', name);
@@ -99,66 +79,76 @@ async function readProjectDataFile(name) {
 
 // ── Cars ──
 export async function getCars() {
-  // 1) KV (persistent across cold starts)
-  if (isVercel && kvReady()) {
-    const raw = await kvGet('cars');
-    if (raw) {
-      let cars = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (Array.isArray(cars) && cars.length > 0) return cars.map(migrateCar);
+  // 1) Redis (persistent)
+  if (isVercel) {
+    const c = await getClient();
+    if (c) {
+      try {
+        const raw = await c.get('cars');
+        if (raw) {
+          const cars = JSON.parse(raw);
+          if (Array.isArray(cars) && cars.length > 0) return cars.map(migrateCar);
+        }
+        // Seed into Redis
+        const pf = await readProjectDataFile('cars.json');
+        const seed = pf && pf.length ? pf : SEED_CARS;
+        await c.set('cars', JSON.stringify(seed));
+        return seed.map(migrateCar);
+      } catch (e) {
+        console.error('Redis getCars error:', e);
+      }
     }
   }
 
-  // 2) /tmp (same instance only)
-  const tmp = await readJSONFile(CARS_FILE);
+  // 2) Filesystem fallback (local dev or no Redis)
+  const tmp = await readJSONFile(path.join(process.cwd(), 'data', 'cars.json'));
   if (tmp && tmp.length) return tmp.map(migrateCar);
 
-  // 3) Project data/ dir
-  const pf = await readProjectDataFile('cars.json');
-  if (pf && pf.length) {
-    await writeJSONFile(CARS_FILE, pf);
-    return pf.map(migrateCar);
-  }
-
-  // 4) Seed
-  await writeJSONFile(CARS_FILE, SEED_CARS);
+  await writeJSONFile(path.join(process.cwd(), 'data', 'cars.json'), SEED_CARS);
   return SEED_CARS;
 }
 
 export async function setCars(cars) {
-  if (isVercel && kvReady()) {
-    await kvSet('cars', JSON.stringify(cars));
-    return;
+  if (isVercel) {
+    const c = await getClient();
+    if (c) {
+      await c.set('cars', JSON.stringify(cars));
+      return;
+    }
   }
-  // Fallback: writes to /tmp (not persistent between instances/cold starts)
-  await writeJSONFile(CARS_FILE, cars);
+  await writeJSONFile(path.join(process.cwd(), 'data', 'cars.json'), cars);
 }
 
 // ── Bookings ──
 export async function getBookings() {
-  if (isVercel && kvReady()) {
-    const raw = await kvGet('bookings');
-    if (raw) {
-      const b = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (Array.isArray(b)) return b;
+  if (isVercel) {
+    const c = await getClient();
+    if (c) {
+      try {
+        const raw = await c.get('bookings');
+        if (raw) {
+          const b = JSON.parse(raw);
+          if (Array.isArray(b)) return b;
+        }
+        await c.set('bookings', JSON.stringify([]));
+        return [];
+      } catch (e) {
+        console.error('Redis getBookings error:', e);
+      }
     }
   }
 
-  const tmp = await readJSONFile(BOOKINGS_FILE);
-  if (tmp) return tmp;
-
-  const pf = await readProjectDataFile('bookings.json');
-  if (pf) {
-    await writeJSONFile(BOOKINGS_FILE, pf);
-    return pf;
-  }
-
-  return [];
+  const tmp = await readJSONFile(path.join(process.cwd(), 'data', 'bookings.json'));
+  return tmp || [];
 }
 
 export async function setBookings(bookings) {
-  if (isVercel && kvReady()) {
-    await kvSet('bookings', JSON.stringify(bookings));
-    return;
+  if (isVercel) {
+    const c = await getClient();
+    if (c) {
+      await c.set('bookings', JSON.stringify(bookings));
+      return;
+    }
   }
-  await writeJSONFile(BOOKINGS_FILE, bookings);
+  await writeJSONFile(path.join(process.cwd(), 'data', 'bookings.json'), bookings);
 }
