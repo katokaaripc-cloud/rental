@@ -6,28 +6,6 @@ import os from 'os';
 const isVercel = process.env.VERCEL === '1';
 const IMG_DIR = isVercel ? path.join(os.tmpdir(), 'rentalkech-imgs') : path.join(process.cwd(), 'data', 'images');
 
-// ── Redis client (singleton) ──
-let client;
-let clientErr;
-
-async function getClient() {
-  if (clientErr) return null;
-  if (client?.isOpen) return client;
-  try {
-    const url = process.env.KV_URL || process.env.REDIS_URL;
-    if (!url) {
-      clientErr = new Error('KV_URL or REDIS_URL not set');
-      return null;
-    }
-    client = await createClient({ url }).connect();
-    return client;
-  } catch (e) {
-    clientErr = e;
-    return null;
-  }
-}
-
-// ── Seed data ──
 const SEED_CARS = [
   {
     id: "bmw-x5-m-sport",
@@ -43,12 +21,24 @@ const SEED_CARS = [
     seats: 7,
     minExperience: "2 years",
     mileageLimit: "No",
-    images: [
-      "https://images.unsplash.com/photo-1555215695-3004980ad54e?auto=format&fit=crop&q=80&w=800",
-    ],
+    images: ["https://images.unsplash.com/photo-1555215695-3004980ad54e?auto=format&fit=crop&q=80&w=800"],
     hidden: false,
   },
 ];
+
+let client;
+let clientErr;
+
+async function getClient() {
+  if (clientErr) return null;
+  if (client?.isOpen) return client;
+  try {
+    const url = process.env.KV_URL || process.env.REDIS_URL;
+    if (!url) { clientErr = new Error('REDIS_URL not set'); return null; }
+    client = await createClient({ url }).connect();
+    return client;
+  } catch (e) { clientErr = e; return null; }
+}
 
 function migrateCar(car) {
   if (!car.images) {
@@ -59,51 +49,17 @@ function migrateCar(car) {
   return car;
 }
 
-// Strip heavy image data from car for Redis storage
-function stripImages(car) {
-  const { images, ...rest } = car;
-  return rest;
+async function readJSON(file) {
+  try { return JSON.parse(await fs.readFile(file, 'utf-8')); } catch { return null; }
+}
+async function writeJSON(file, data) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(data, null, 2));
 }
 
-async function readJSONFile(filePath) {
-  try {
-    const data = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(data);
-  } catch { return null; }
-}
-
-async function writeJSONFile(filePath, data) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-}
-
-async function readProjectDataFile(name) {
-  try {
-    const p = path.join(process.cwd(), 'data', name);
-    const data = await fs.readFile(p, 'utf-8');
-    return JSON.parse(data);
-  } catch { return null; }
-}
-
-// ── Image storage (filesystem — not in Redis to avoid OOM) ──
-async function saveImages(carId, images) {
-  await writeJSONFile(path.join(IMG_DIR, `${carId}.json`), images || []);
-}
-
-async function loadImages(carId) {
-  const d = await readJSONFile(path.join(IMG_DIR, `${carId}.json`));
-  return d || [];
-}
-
-async function deleteImages(carId) {
-  try { await fs.unlink(path.join(IMG_DIR, `${carId}.json`)); } catch {}
-}
-
-// ── Cars ──
 export async function getCars() {
   let cars = [];
 
-  // 1) Redis (persistent, no images stored here)
   if (isVercel) {
     const c = await getClient();
     if (c) {
@@ -114,84 +70,74 @@ export async function getCars() {
           if (!Array.isArray(cars)) cars = [];
         }
         if (cars.length === 0) {
-          const pf = await readProjectDataFile('cars.json');
-          cars = pf && pf.length ? pf : SEED_CARS;
-          // Strip images before saving to Redis
-          await c.set('cars', JSON.stringify(cars.map(stripImages)));
+          // Seed from project file or hardcoded data
+          const pf = await readJSON(path.join(process.cwd(), 'data', 'cars.json'));
+          cars = pf?.length ? pf : SEED_CARS;
+          for (const car of cars) {
+            if (car.images?.length) await writeJSON(path.join(IMG_DIR, `${car.id}.json`), car.images);
+          }
+          await c.set('cars', JSON.stringify(cars.map(({ images, ...rest }) => rest)));
+        } else {
+          // Migration: old data may have embedded images — strip them out
+          let changed = false;
+          for (const car of cars) {
+            if (car.images?.length) {
+              await writeJSON(path.join(IMG_DIR, `${car.id}.json`), car.images);
+              delete car.images;
+              changed = true;
+            }
+          }
+          if (changed) await c.set('cars', JSON.stringify(cars));
         }
-      } catch (e) {
-        console.error('Redis getCars error:', e);
-      }
+      } catch (e) { console.error('Redis getCars:', e); }
     }
   }
 
-  // 2) Filesystem fallback
-  if (cars.length === 0) {
-    const data = await readJSONFile(path.join(process.cwd(), 'data', 'cars.json'));
-    if (data && data.length) cars = data;
-  }
-  if (cars.length === 0) {
-    cars = SEED_CARS;
+  if (!cars.length) {
+    const d = await readJSON(path.join(process.cwd(), 'data', 'cars.json'));
+    cars = d?.length ? d : SEED_CARS;
   }
 
-  // Merge images back from filesystem
-  const result = [];
+  // Merge images from filesystem
+  const out = [];
   for (const car of cars) {
-    const imgs = await loadImages(car.id);
-    result.push(migrateCar({ ...car, images: imgs.length ? imgs : car.images }));
+    const imgs = await readJSON(path.join(IMG_DIR, `${car.id}.json`));
+    out.push(migrateCar({ ...car, images: imgs || car.images || [] }));
   }
-  return result;
+  return out;
 }
 
 export async function setCars(cars) {
-  // Save images separately
   for (const car of cars) {
-    if (car.images && car.images.length) {
-      await saveImages(car.id, car.images);
-    }
+    if (car.images?.length) await writeJSON(path.join(IMG_DIR, `${car.id}.json`), car.images);
   }
-
-  // Strip images and save metadata to Redis
-  const stripped = cars.map(stripImages);
+  const stripped = cars.map(({ images, ...rest }) => rest);
   if (isVercel) {
     const c = await getClient();
-    if (c) {
-      await c.set('cars', JSON.stringify(stripped));
-      return;
-    }
+    if (c) { await c.set('cars', JSON.stringify(stripped)); return; }
   }
-  await writeJSONFile(path.join(process.cwd(), 'data', 'cars.json'), stripped);
+  await writeJSON(path.join(process.cwd(), 'data', 'cars.json'), stripped);
 }
 
-// ── Bookings ──
 export async function getBookings() {
   if (isVercel) {
     const c = await getClient();
     if (c) {
       try {
         const raw = await c.get('bookings');
-        if (raw) {
-          const b = JSON.parse(raw);
-          if (Array.isArray(b)) return b;
-        }
+        if (raw) { const b = JSON.parse(raw); if (Array.isArray(b)) return b; }
         await c.set('bookings', JSON.stringify([]));
         return [];
-      } catch (e) {
-        console.error('Redis getBookings error:', e);
-      }
+      } catch (e) { console.error('Redis getBookings:', e); }
     }
   }
-  const tmp = await readJSONFile(path.join(process.cwd(), 'data', 'bookings.json'));
-  return tmp || [];
+  return (await readJSON(path.join(process.cwd(), 'data', 'bookings.json'))) || [];
 }
 
 export async function setBookings(bookings) {
   if (isVercel) {
     const c = await getClient();
-    if (c) {
-      await c.set('bookings', JSON.stringify(bookings));
-      return;
-    }
+    if (c) { await c.set('bookings', JSON.stringify(bookings)); return; }
   }
-  await writeJSONFile(path.join(process.cwd(), 'data', 'bookings.json'), bookings);
+  await writeJSON(path.join(process.cwd(), 'data', 'bookings.json'), bookings);
 }
