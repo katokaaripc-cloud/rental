@@ -1,16 +1,40 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { Trash2, PlusCircle, X, Eye, EyeOff } from 'lucide-react';
+import { Trash2, PlusCircle, X, Eye, EyeOff, Pencil } from 'lucide-react';
 
 export default function FleetPage() {
   const fileInputRef = useRef(null);
   const [cars, setCars] = useState([]);
   const [error, setError] = useState('');
+  const [editingId, setEditingId] = useState(null);
   const [newCar, setNewCar] = useState({
     name: '', pricePerDay: '', type: 'Premium SUV', fuel: 'Diesel', description: '',
     gearbox: 'Automatic', engine: '2.0 l', year: '2024 — 2026', ac: 'Dual-zone automatic',
-    seats: '5', minExperience: '2 years', mileageLimit: 'No', images: []
+    seats: '5', minExperience: '2 years', mileageLimit: 'No', images: [], images_full: []
   });
+
+  const compressImage = (file, maxSize, quality) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Failed to decode image'));
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let { width, height } = img;
+          if (width > height && width > maxSize) { height = Math.round(height * maxSize / width); width = maxSize; }
+          else if (height > maxSize) { width = Math.round(width * maxSize / height); height = maxSize; }
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   useEffect(() => { fetchCars(); }, []);
 
@@ -21,22 +45,19 @@ export default function FleetPage() {
   const handleAddCar = async (e) => {
     e.preventDefault();
     setError('');
-    const res = await fetch('/api/cars', {
-      method: 'POST',
+    const url = editingId ? `/api/cars/${editingId}` : '/api/cars';
+    const method = editingId ? 'PATCH' : 'POST';
+    const res = await fetch(url, {
+      method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newCar)
     });
     if (res.ok) {
       fetchCars();
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      setNewCar({
-        name: '', pricePerDay: '', type: 'Premium SUV', fuel: 'Diesel', description: '',
-        gearbox: 'Automatic', engine: '2.0 l', year: '2024 — 2026', ac: 'Dual-zone automatic',
-        seats: '5', minExperience: '2 years', mileageLimit: 'No', images: []
-      });
+      handleCancelEdit();
     } else {
       const err = await res.json();
-      setError(err.error || 'Failed to add car');
+      setError(err.error || (editingId ? 'Failed to update car' : 'Failed to add car'));
     }
   };
 
@@ -65,6 +86,36 @@ export default function FleetPage() {
     }
   };
 
+  const handleEditCar = (car) => {
+    setEditingId(car.id);
+    setNewCar({
+      name: car.name,
+      pricePerDay: String(car.pricePerDay),
+      type: car.type || 'Premium SUV',
+      fuel: car.fuel || 'Diesel',
+      description: car.description || '',
+      gearbox: car.gearbox || 'Automatic',
+      engine: car.engine || '2.0 l',
+      year: car.year || '2024 — 2026',
+      ac: car.ac || 'Dual-zone automatic',
+      seats: String(car.seats || '5'),
+      minExperience: car.minExperience || '2 years',
+      mileageLimit: car.mileageLimit || 'No',
+      images: car.images || [],
+      images_full: car.images_full || [],
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setNewCar({
+      name: '', pricePerDay: '', type: 'Premium SUV', fuel: 'Diesel', description: '',
+      gearbox: 'Automatic', engine: '2.0 l', year: '2024 — 2026', ac: 'Dual-zone automatic',
+      seats: '5', minExperience: '2 years', mileageLimit: 'No', images: [], images_full: []
+    });
+  };
+
   const visibleCount = cars.filter(c => !c.hidden).length;
 
   return (
@@ -74,15 +125,15 @@ export default function FleetPage() {
       {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
         <form onSubmit={handleAddCar} className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm space-y-4 lg:col-span-1 text-sm">
-          <h2 className="font-bold text-slate-900 flex items-center gap-2 text-base mb-2"><PlusCircle size={18} className="text-emerald-600"/> Append New Vehicle Asset</h2>
+          <h2 className="font-bold text-slate-900 flex items-center gap-2 text-base mb-2">{editingId ? <Pencil size={18} className="text-blue-600"/> : <PlusCircle size={18} className="text-emerald-600"/>} {editingId ? 'Modify Vehicle Asset' : 'Append New Vehicle Asset'}</h2>
 
           <input type="text" placeholder="Vehicle Name (e.g., BMW X5 M-Sport)" required value={newCar.name} onChange={e => setNewCar({...newCar, name: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-slate-900" />
           <input type="number" placeholder="Daily Rental Cost (MAD)" required value={newCar.pricePerDay} onChange={e => setNewCar({...newCar, pricePerDay: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-slate-900" />
-          <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={e => { const files = Array.from(e.target.files || []); Promise.all(files.map(file => new Promise(resolve => { const reader = new FileReader(); reader.onload = ev => resolve(ev.target.result); reader.readAsDataURL(file); }))).then(results => setNewCar(prev => ({...prev, images: [...prev.images, ...results]}))); }} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-900 file:text-white file:text-sm file:font-medium" />
+          <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={async e => { const files = Array.from(e.target.files || []); for (const file of files) { try { const [thumb, full] = await Promise.all([compressImage(file, 300, 0.5), compressImage(file, 1200, 0.8)]); setNewCar(prev => ({...prev, images: [...prev.images, thumb], images_full: [...(prev.images_full || []), full]})); } catch (err) { console.error('Image compress failed', err); } } }} className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-900 file:text-white file:text-sm file:font-medium" />
           {newCar.images.length > 0 && <div className="flex gap-2 flex-wrap">
             {newCar.images.map((img, i) => <div key={i} className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-200 group">
               <img src={img} alt="" className="w-full h-full object-cover" />
-              <button type="button" onClick={() => setNewCar({...newCar, images: newCar.images.filter((_, j) => j !== i)})} className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={10}/></button>
+              <button type="button" onClick={() => setNewCar({...newCar, images: newCar.images.filter((_, j) => j !== i), images_full: (newCar.images_full || []).filter((_, j) => j !== i)})} className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><X size={10}/></button>
             </div>)}
           </div>}
           <textarea placeholder="Vehicle profile description details..." required value={newCar.description} onChange={e => setNewCar({...newCar, description: e.target.value})} className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-slate-900 h-20 resize-none" />
@@ -97,7 +148,10 @@ export default function FleetPage() {
             <input type="text" placeholder="Seats total count" value={newCar.seats} onChange={e => setNewCar({...newCar, seats: e.target.value})} className="p-2 bg-slate-50 border border-slate-200 rounded-md" />
           </div>
 
-          <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-2.5 rounded-xl hover:bg-emerald-700 transition mt-2">Publish Fleet Asset Entry</button>
+          <div className="flex gap-2 mt-2">
+            {editingId && <button type="button" onClick={handleCancelEdit} className="w-1/3 border border-slate-200 text-slate-500 font-medium py-2.5 rounded-xl hover:bg-slate-50 transition text-sm">Cancel</button>}
+            <button type="submit" className={`${editingId ? 'w-2/3' : 'w-full'} bg-emerald-600 text-white font-bold py-2.5 rounded-xl hover:bg-emerald-700 transition`}>{editingId ? 'Save Changes' : 'Publish Fleet Asset Entry'}</button>
+          </div>
         </form>
 
         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden lg:col-span-2">
@@ -118,6 +172,9 @@ export default function FleetPage() {
                 <div className="flex items-center gap-1">
                   <button onClick={() => toggleHidden(car)} className={`p-2 rounded-lg transition ${car.hidden ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`} title={car.hidden ? 'Show on site' : 'Hide from site'}>
                     {car.hidden ? <Eye size={16} /> : <EyeOff size={16} />}
+                  </button>
+                  <button onClick={() => handleEditCar(car)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Modify Vehicle">
+                    <Pencil size={16} />
                   </button>
                   <button onClick={() => handleDeleteCar(car.id)} className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="Purge Record">
                     <Trash2 size={16} />

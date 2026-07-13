@@ -39,6 +39,7 @@ export default function CarDetailPage({ params }) {
 
   if (!car) return <div className="p-12 text-center text-slate-500">Loading Vehicle Blueprint Specifications Data...</div>;
   const images = car.images?.length ? car.images : car.image ? [car.image] : [];
+  const fullImages = car.images_full?.length ? car.images_full : images;
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-12">
@@ -50,7 +51,7 @@ export default function CarDetailPage({ params }) {
         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-2">
           <div className="bg-slate-100 min-h-[350px] flex flex-col">
             <div className="relative flex-1 flex items-center justify-center">
-              <img src={images[currentImage]} alt={car.name} className="w-full h-full object-cover absolute inset-0" />
+              <img src={fullImages[currentImage]} alt={car.name} className="w-full h-full object-cover absolute inset-0" />
               {images.length > 1 && <>
                 <button onClick={() => setCurrentImage(i => (i - 1 + images.length) % images.length)} className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white p-1.5 rounded-full shadow-sm transition"><ChevronLeft size={18}/></button>
                 <button onClick={() => setCurrentImage(i => (i + 1) % images.length)} className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white p-1.5 rounded-full shadow-sm transition"><ChevronRight size={18}/></button>
